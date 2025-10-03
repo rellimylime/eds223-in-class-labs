@@ -492,13 +492,14 @@ Similar to the `theme()` function in `ggplot2`, the `tm_layout()` function in `t
 ```{r}
 tm_shape(world_vector) +
   tm_polygons(fill = "wb_income_region",
-              #fill.scale = tm_scale(values = viridisLite::plasma(5))
+              fill.scale = tm_scale(values = viridisLite::plasma(5)),
               fill.legend = tm_legend(title = "Regional Income")) +
   tm_title(text = "Global Income",
            frame = TRUE) +
   tm_layout(text.fontfamily = "Montserrat",
             style = "beaver",
-            bg.color = "grey95")
+            bg.color = "grey95") +
+  tm_crs("+proj=eqearth")
 ```
 
 
