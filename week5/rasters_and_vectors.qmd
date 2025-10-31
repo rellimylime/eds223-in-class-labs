@@ -432,5 +432,7 @@ base_map %>%
 plot_3d(bryce_zoom_mat, windowsize=c(1200,800))
 render_camera(theta=240,  phi=30, zoom=0.3,  fov=60)
 render_snapshot()
+
+# Testing git commit
 ```
 
