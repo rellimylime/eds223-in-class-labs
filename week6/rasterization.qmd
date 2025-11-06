@@ -77,9 +77,16 @@ Let's check out how this works by investigating an example from Zion National Pa
 boundary <- read_sf(system.file("vector/zion.gpkg", package = "spDataLarge")) 
 
 # load elevation raster to use as template raster object
-elevation <- rast(system.file("raster/srtm.tif", package = "spDataLarge"))
+elevation <- terra::rast(system.file("raster/srtm.tif", package = "spDataLarge"))
 
-
+# Check and transform CRS
+if(crs(elevation) == crs(boundary)) {
+  print("Coordiate reference systems match")
+} else {
+  warning("Updating coordinate reference systems to match")
+  # Transform data to match
+  boundary <- st_transform(boundary, st_crs(elevation))
+}
 ```
 
 Rasterization gives different results for polygon versus line vector objects. 
@@ -90,13 +97,22 @@ Rasterization gives different results for polygon versus line vector objects.
 Let's check out whether or not the park boundary is represented as polygon or line. We can always inspect the geometry type of a vector object using `sf::st_geometry_type()`.
 
 ```{r}
-
+if (sf::st_geometry_type(boundary) == "POLYGON") {
+  print("polygon data")
+} else {
+  print("not polygon data")
+}
 ```
 
 The park boundary is a polygon, so let's make a version that just represents the park border using a line geometry. 
 
 ```{r}
+# Update park boundary object name to clarify that it's a polygon
+park_polygon <- boundary
 
+# Create line version park boundary
+park_border <- boundary %>% 
+  sf::st_cast(., "MULTILINESTRING")
 ```
 
 
@@ -115,8 +131,8 @@ tmap_arrange(map1, map2, nrow = 1)
 
 Now we can rasterize both the polygon and line representations of the park boundary.
 ```{r}
-
-
+polygon_raster <- terra::rasterize(park_polygon, elevation)
+border_raster <- terra::rasterize(park_border, elevation)
 ```
 
 ```{r}
@@ -148,7 +164,19 @@ Using a custom template raster is a also a great way to explore how the resoluti
 :::
 
 ```{r}
+# Create a low spatial resolution template raster
+template_raster_low <- terra::rast(ext(park_polygon), resolution = 0.05,
+                                   crs = st_crs(park_polygon))
 
+# create high spatial resolution template raster
+template_raster_high <- terra::rast(ext(park_polygon), resolution = 0.01,
+                                   crs = st_crs(park_polygon))
+
+# Rasterize to low resolution template raster
+polygon_raster_low <- terra::rasterize(park_polygon, template_raster_low)
+
+# Rasterize to high resolution template raster
+polygon_raster_high <- terra::rasterize(park_polygon, template_raster_high)
 ```
 
 
@@ -179,7 +207,14 @@ When working with point data, we can use the same process as with line and polyg
 Let's try an example using data on cycle hire points in London from `{spData}`.
 
 ```{r}
+# Define point data
+cycle_hire_osm <- spData::cycle_hire_osm
 
+# Transform to projected CRS
+cycle_hire_osm_projected <- sf::st_transform(cycle_hire_osm, "EPSG:27700")
+
+# Define raster template
+template_raster <- terra::rast(ext(cycle_hire_osm_projected), resolution = 1000, crs = crs(cycle_hire_osm_projected))
 ```
 
 In the following code chunk we'll perform three versions of rasterization to produce the following:
@@ -191,17 +226,21 @@ In the following code chunk we'll perform three versions of rasterization to pro
 To represent the **presence/absence** of cycle hire points, we use the same procedure as before.
 
 ```{r}
+ch_raster1 <- terra::rasterize(cycle_hire_osm_projected, template_raster)
 ```
 
 To represent the **number** of cycle hire points, we use the `fun` argument which allows for various summarizing functions. Setting the argument `fun = "length"` will return a count of the number of points in each cell
 
 ```{r}
-
+ch_raster2 <- rasterize(cycle_hire_osm_projected, template_raster, 
+                       fun = "length")
 ```
 
 To represent the **total capacity** of cycle hire points, we need to take the sum of each points' capacity. We can do this by defining which field we would like to aggregate (in this case `capacity`) and what aggregating function we would like to use (in this case `fun = sum`).
 
 ```{r}
+ch_raster3 <- rasterize(cycle_hire_osm_projected, template_raster, 
+                       field = "capacity", fun = sum, na.rm = TRUE)
 
 ```
 
@@ -300,17 +339,91 @@ We can explore various band combinations, but there are a few common false color
 ```{r}
 #| message: false
 
+map1 <- tm_shape(L7) +
+  tm_rgb(col = tm_vars(c(3, 2, 1), multivariate = TRUE)) +
+  tm_title(text = "true color")
+
+map2 <- tm_shape(L7) +
+  tm_rgb(col = tm_vars(c(4, 3, 2),  multivariate = TRUE)) +
+  tm_title(text = "NIR, red, green")
+
+map3 <- tm_shape(L7) +
+  tm_rgb(col = tm_vars(c(5, 4, 2),  multivariate = TRUE)) +
+  tm_title(text = "SWIR, NIR, green")
+
+tmap_arrange(map1, map2, map3, nrow = 1)
 ```
 
 We can also create create rasters of NDVI (Normalized difference vegetation index) and NDWI (Normalized difference water index). 
 ```{r}
 #| message: false
 
+# Define NDVI as the normalized difference between NIR and red 
+ndvi_fun <- function(nir, red){
+  (nir - red) / (nir + red)
+}
+
+# apply NDVI function to Landsat bands 3 & 4
+ndvi_rast <- lapp(L7[[c(4, 3)]], fun = ndvi_fun)
+
+names(ndvi_rast) <- "NDVI"
+
+# Visualize NDVI
+ndvi_map <- tm_shape(ndvi_rast) +
+  tm_raster(
+    col.scale = tm_scale_continuous(values = "brewer.rd_yl_gn"),
+    col.legend = tm_legend(title = "NDVI",
+                           orientation = "portait")
+    ) +
+  tm_title(text = "NDVI")
+
+tmap_arrange(map1, map2, ndvi_map)
+
 ```
 
 ```{r}
 #| message: false
 
+# define NDWI as the normalized difference between green and nir bands
+ndwi_fun <- function(green, nir){
+  (green - nir) / (green + nir)
+}
+
+# apply NDWI function to Landsat bands 3 & 4
+ndwi_rast <- lapp(L7[[c(2, 4)]], fun = ndwi_fun)
+names(ndwi_rast) <- "NDWI"
+
+map_ndwi <- tm_shape(ndwi_rast) +
+  tm_raster(
+    col.scale = tm_scale_continuous(values = "brewer.blues"),
+    col.legend = tm_legend(title = "NDWI", 
+                           orientation = "portrait")
+  ) +
+  tm_title(text = "NDWI")
+
+
+tmap_arrange(map1, map3, map_ndwi)
 ```
 
+```{r}
+ndmi_fun <- function(nir, swir){
+  (nir - swir) / (nir + swir)
+}
 
+ndmi_rast <- lapp(L7[[c(4, 5)]], fun = ndmi_fun)
+names(ndmi_rast) <- "NDMI"
+
+map_ndmi <- tm_shape(ndmi_rast) +
+  tm_raster(
+    col.scale = tm_scale_continuous(values = "brewer.blues"),
+    col.legend = tm_legend(title = "NDMI", 
+                           orientation = "portrait")
+  ) +
+  tm_title(text = "NDMI")
+
+map_ndmi
+```
+
+The normalized moisture index: vegetation index used in remote sensing used in RS to measure and monitor the water content in vegitation
+
+NDMI = (NIR - SWIR) / (NIR + SWIR)
